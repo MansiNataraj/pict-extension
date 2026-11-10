@@ -1,0 +1,9 @@
+﻿.venv/
+__pycache__/
+*.pyc
+.env
+pitc-backend/.env
+node_modules/
+pitc-frontend/node_modules/
+dist/
+.DS_Store
