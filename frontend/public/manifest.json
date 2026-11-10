@@ -3,9 +3,28 @@
   "name": "PITC - Proactive Intelligent Translation Coach",
   "version": "2.0.0",
   "description": "Cross-cultural chat coaching and speech translation in your browser side panel.",
-  "action": { "default_title": "Open PITC" },
-  "side_panel": { "default_path": "index.html" },
-  "background": { "service_worker": "background.js" },
-  "permissions": ["sidePanel", "storage"],
-  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*"]
+  "action": {
+    "default_title": "PITC: select text on any page to translate"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }
