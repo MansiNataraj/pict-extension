@@ -1,124 +1,106 @@
 # Proactive Intelligent Translation Coach (PITC)
 
-**PITC** is a full-stack, sociopragmatic cross-cultural communication platform designed to prevent relational friction, hierarchy violations, and register mismatches before messages are transmitted. 
+**PITC** is a Chrome/Edge extension that translates selected text on any web page while accounting for sociopragmatic risk: register, honorifics, hierarchy, gender agreement, idioms and cultural sensitivities. Instead of translating blindly, it first asks a few short **Cultural Risk Taxonomy (CRT)** questions and applies your answers to the translation.
 
-It combines real-time pragmatic coaching across multiple organizational roles with a low-latency, bidirectional speech-to-speech translation engine featuring active pragmatic tone calibration.
-
-Supported Language Registers & Scripts:
+Supported languages:
 * **Hindi (`hi`)** — हिन्दी (Devanagari)
 * **Tamil (`ta`)** — தமிழ் (Tamil)
 * **Kannada (`kn`)** — ಕನ್ನಡ (Kannada)
 * **Arabic (`ar`)** — العربية (Arabic)
-* **English (`en`)** — Modal politeness (Speech Engine)
+* **English (`en`)**
 
 ---
 
 ## Key Features
 
-### 1. Sociopragmatic Text Chat & Pre-Send CRT Guardrail
-* **Cultural Risk Taxonomy (CRT):** Automatically evaluates outbound drafts against five sociopragmatic dimensions:
-  * **C1: Register / Pronoun Mismatch** ($T/V$ distinction: *Tu* vs. *Tum* vs. *Aap*; *Nee* vs. *Neenga*; *Antum/Hadratak* vs. *Inta*).
-  * **C2: Idiomatic Opacity** (Detects literal translations of culture-specific idioms).
-  * **C3: Gender Agreement Discordance** (Flags grammatical concord violations).
-  * **C4: Hierarchy & Seniority Violations** (Audits deference expected by superiors/elders).
-  * **C5: Socio-Cultural & Religious Sensitivities**.
-* **Role-Calibrated Workspaces:** Pre-seeded with context-aware session threads across three organizational roles:
-  * **Superior / Senior:** High deference (*Formal*).
-  * **Peer / Colleague:** Balanced professional collaboration (*Semi-Formal*).
-  * **Subordinate / Junior:** Direct, colloquial team interaction (*Informal/Casual*).
-* **On-Demand 3-Tone Formality Calibration:** Clicking **"Coach Me"** generates three distinct register options (*Formal*, *Semi-Formal*, *Informal*) with predicted recipient perceptions and one-click draft swapping.
-* **Persistent Session Memory:** In-memory message persistence across role switches and home navigation.
+### Select-to-translate with CRT questions
+1. Select text (2 to 1500 characters) on any web page, or inside a text box.
+2. PITC offers **Translate this with PITC?** and a target-language picker. The source language is detected automatically.
+3. PITC asks **at most two** context questions, only when the answer is ambiguous and would change the translation. Each question is tagged with the CRT code it addresses. Neutral text gets no questions, and you can always click **Skip questions**.
+4. You receive the translation, the register used, a note per CRT dimension that was applied, and **Formal / Semi-formal / Casual** variants with **Copy** buttons.
 
-### 2. Bidirectional Voice Coach & Speech Engine
-* **Native Web Speech STT & TTS:** Leverages browser-native SpeechRecognition and SpeechSynthesis with BCP-47 language routing (`hi-IN`, `ta-IN`, `kn-IN`, `ar-SA`, `en-US`).
-* **Pragmatic Tone Presets:** Calibrates spoken translation outputs across **Polite**, **Traditional**, and **Casual** registers.
-* **Push-to-Talk (PTT) Dual Speakers:** Dedicated interactive channels for both conversation participants with instant language-swap toggling.
-* **Direct Composer Insertion:** One-click handoff from voice translation output directly into the text chat composer.
+### Cultural Risk Taxonomy (CRT)
+* **C1: Register / pronoun level** (*Tu / Tum / Aap*, *Nee / Neenga*, *Neenu / Neevu*, *Inta / Hadratak*).
+* **C2: Idiomatic opacity** (literal translations of culture-specific idioms).
+* **C3: Gender agreement** (verb and pronoun concord).
+* **C4: Hierarchy and seniority** (deference owed to seniors, elders, clients).
+* **C5: Socio-cultural and religious sensitivity.**
 
-### 3. Resilient Hybrid AI Inference
-* **Primary Cloud Engine:** Direct REST calls to Gemini models (`gemini-2.5-flash-lite`, `gemini-2.5-flash`) via `httpx`.
-* **Local Offline Failover:** Automatic fallback to a local Ollama instance running `aya-expanse:8b` during rate-limiting or network disconnections.
-* **Robust JSON Extraction:** Token-based payload slicing and ASCII sanitization to prevent parser crashes on structured LLM outputs.
+### Resilient hybrid AI inference
+* **Primary:** Gemini via direct REST (`httpx`), trying the configured model and then fallbacks.
+* **Local failover:** a local Ollama instance (`aya-expanse:8b`) when the cloud is unavailable.
+* **Robust JSON extraction** and input validation so malformed model output does not crash the API.
+* **Logging:** every request, answer, model choice and failure reason is written to `backend/pitc.log`.
+
+> The repo also contains a React chat-coach and voice-translator UI plus the `/coach`, `/analyse`, `/reply` and `/speech-translate` endpoints from the original web app. The extension does not currently expose them.
 
 ---
 
 ## Architecture Overview
 
 ```
-                      ┌────────────────────────────────────────┐
-                      │          React / Vite Frontend         │
-                      │               (Port 5173)              │
-                      └───────────────────┬────────────────────┘
-                                          │
-                        REST API (JSON)   │  HTTP / CORS
-                                          ▼
-                      ┌────────────────────────────────────────┐
-                      │          FastAPI Backend Core          │
-                      │               (Port 8000)              │
-                      ├───────────────────┬────────────────────┤
-                      │  /coach           │  /speech-translate │
-                      │  /analyse         │  /reply            │
-                      └───────────────────┼────────────────────┘
-                                          │
-                         Provider Routing & Failover
-                                          │
-                 ┌────────────────────────┴────────────────────────┐
-                 ▼                                                 ▼
-     ┌───────────────────────┐                         ┌───────────────────────┐
-     │  Google Gemini Cloud  │   Fallback on Timeout   │  Local Ollama Engine  │
-     │      (Direct REST)    │ ──────────────────────> │    (aya-expanse:8b)   │
-     └───────────────────────┘                         └───────────────────────┘
+  Web page ── selected text ──► content script (popup UI, shadow DOM)
+                                      │  chrome.runtime message
+                                      ▼
+                         background service worker
+                                      │  fetch (localhost:8000)
+                                      ▼
+                         ┌──────────────────────────┐
+                         │   FastAPI backend        │
+                         │   POST /crt/questions    │
+                         │   POST /crt/translate    │
+                         └────────────┬─────────────┘
+                                      │ provider routing + failover
+                        ┌─────────────┴─────────────┐
+                        ▼                           ▼
+               Google Gemini (REST)   ──►   Local Ollama (fallback)
 ```
+
+The extension is only the UI. The backend runs on the user's own machine and holds the API key.
 
 ---
 
 ## Directory Structure
 
 ```text
-PITC_final/
-├── pitc-backend/
-│   ├── .env                       # Cloud API key and local model configuration
-│   ├── requirements.txt           # Python backend dependencies
-│   ├── main.py                    # FastAPI application, CORS, and endpoint mounting
-│   ├── config.py                  # Supported languages, CRT rules, and model names
+PITC-Extension/
+├── backend/
+│   ├── .env.example               # Copy to .env and add GEMINI_API_KEY
+│   ├── requirements.txt
+│   ├── main.py                    # FastAPI app, CORS, request logging
+│   ├── config.py                  # Languages, CRT taxonomy, model names
 │   └── app/
-│       ├── __init__.py
-│       ├── chains.py              # Cloud REST execution + Ollama fallback logic
-│       ├── models.py              # Pydantic schemas (Request/Response contracts)
-│       ├── prompts.py             # CRT diagnostic and speech prompt templates
+│       ├── chains.py              # Gemini call + Ollama fallback, logging
+│       ├── models.py              # Pydantic request/response schemas
+│       ├── prompts.py             # CRT question + translation prompts
+│       ├── logging_config.py      # Console + backend/pitc.log
 │       └── routers/
-│           ├── __init__.py
-│           └── speech.py          # /speech-translate router
+│           ├── crt.py             # /crt/questions, /crt/translate (used by the extension)
+│           └── speech.py, chat_reply.py, ...   # legacy web-app endpoints
 │
-├── pitc-frontend/
-│   ├── package.json               # Node dependencies and build scripts
-│   ├── vite.config.js             # Vite configuration
-│   ├── tailwind.config.js         # Tailwind CSS styling and animations
-│   ├── index.html                 # HTML entry point
-│   └── src/
-│       ├── App.jsx                # Root component
-│       ├── main.jsx               # React DOM initialization
-│       ├── index.css              # Global styles & Tailwind utilities
-│       └── components/
-│           ├── MainPage.jsx       # Landing page, modality picker, and top navbar
-│           ├── ChatApp.jsx        # Role-based chat hub & 3-tone CRT coach
-│           └── SpeechTranslator.jsx # Bidirectional voice coach with TTS playback
+├── frontend/
+│   ├── public/
+│   │   ├── manifest.json          # Manifest V3
+│   │   ├── content.js             # Select-to-translate popup
+│   │   └── background.js          # Service worker, relays requests to the backend
+│   ├── src/                       # Legacy React UI (not exposed by the extension)
+│   └── vite.config.js             # Builds to frontend/dist
 │
-├── .gitignore                     # Git exclusion rules (.env, node_modules, .venv)
-└── README.md                      # Project documentation
+└── readme.md
 ```
 
 ---
 
-## Chrome Extension Setup (Quick Start for Testers)
+## Chrome / Edge Extension Setup (Quick Start for Testers)
 
-PITC runs as a Chrome side-panel extension (Manifest V3). The extension is only the UI; the FastAPI backend must be running on your own machine at `localhost:8000` whenever you use it. Each tester uses their **own** Gemini API key.
+The extension is only the UI; the FastAPI backend must be running on your own machine at `localhost:8000` whenever you use it. Each tester uses their **own** Gemini API key.
 
 ### Requirements
-* **Google Chrome** (a recent version with side panel support)
+* **Google Chrome** or **Microsoft Edge** (Chromium, Manifest V3)
 * **Python 3.10+**
 * **Node.js 18+** and **npm**
 * A **Gemini API key** (free at https://aistudio.google.com/apikey)
+* *(Optional)* **Ollama** with `aya-expanse:8b` for offline fallback: `ollama run aya-expanse:8b`
 
 ### Step 1: Get the code
 ```bash
@@ -138,206 +120,105 @@ Open `backend/.env` and replace `your_gemini_api_key_here` with your own key. Th
 ```bash
 uvicorn main:app --port 8000
 ```
-Check it works: open http://localhost:8000/health in a browser. You should see `{"status":"ok","service":"PITC Backend"}`. Leave this terminal running.
+Check it works: open http://localhost:8000/health. You should see `{"status":"ok","service":"PITC Backend"}`. Leave this terminal running. Interactive API docs are at http://localhost:8000/docs.
 
 ### Step 3: Build the extension
 Open a **second** terminal:
 ```bash
-cd PITC-Extension/frontend
+cd pict-extension/frontend
 npm install
 npm run build
 ```
 This creates the folder `frontend/dist`.
 
-### Step 4: Load it in Chrome
-1. Go to `chrome://extensions`.
-2. Turn on **Developer mode** (top-right toggle).
+### Step 4: Load it in the browser
+1. Go to `chrome://extensions` (Edge: `edge://extensions`).
+2. Turn on **Developer mode**.
 3. Click **Load unpacked** and select the `frontend/dist` folder.
-4. (Optional) Pin the PITC icon from the puzzle-piece menu in the toolbar.
-5. Click the **PITC** icon. The side panel opens.
+4. Refresh any page that was already open. Pages open before the install do not get the extension.
+
+There is no toolbar panel: the extension works by selecting text on a page.
 
 ### Step 5: Try it
-Follow the [Testing Workflow](#testing-workflow) below.
+Open any normal web page (not a `chrome://` page or the Chrome Web Store) and select some text.
+1. A small box asks **Translate this with PITC?**. Pick the target language and click **Translate**.
+2. Answer the CRT questions, or click **Skip questions**.
+3. Check the translation, the register used, the CRT notes and the three register variants.
+
+### Where the logs are (send these when reporting a problem)
+| Log | How to open it |
+|---|---|
+| Backend | `backend/pitc.log` (also printed in the terminal running `uvicorn`). Shows each request, the questions asked, the answers, which model replied, timings, and the exact Gemini error if a call fails. |
+| Extension background | `chrome://extensions` -> PITC -> click the **service worker** link -> Console. Lines start with `[PITC bg]`. |
+| Page popup | On the page where you selected text: right click -> Inspect -> Console. Lines start with `[PITC]`. |
+
+Set `PITC_LOG_LEVEL=DEBUG` before starting the backend for more detail.
 
 ### Troubleshooting
 | Problem | Fix |
 |---|---|
-| Panel is blank or shows network errors | The backend isn't running. Start it (Step 2) and confirm `/health` works. |
-| Coach or translate fails with an AI/auth error | `GEMINI_API_KEY` in `backend/.env` is missing or wrong. Fix it and restart `uvicorn`. |
-| `Address already in use` on port 8000 | Another process uses the port. Stop it, or find it with `lsof -i :8000`. |
-| Voice (microphone) doesn't work | Speech recognition may be restricted in extension panels. Note the behavior and report it. Text chat is unaffected. |
-| Changes to the frontend don't show | Re-run `npm run build`, then click the reload icon on the extension card in `chrome://extensions`. |
-| Toolbar icon is a default placeholder | Expected. No custom icons have been added yet. |
-
-> The sections below describe the original web-app setup. For the extension, use the steps above. Directory names there (`pitc-backend`, `pitc-frontend`) correspond to `backend` and `frontend` in this repo.
-
----
-
-## Installation & Setup
-
-### Prerequisites
-* **Python 3.10+**
-* **Node.js 18+** & **npm**
-* **Google Gemini API Key** (from Google AI Studio)
-* *(Optional)* **Ollama** installed with `aya-expanse:8b` for local offline fallback:
-  ```bash
-  ollama run aya-expanse:8b
-  ```
-
----
-
-### 1. Backend Configuration (`pitc-backend`)
-
-1. Navigate to the backend directory:
-   ```bash
-   cd pitc-backend
-   ```
-
-2. Create and activate a Python virtual environment:
-   * **Windows (PowerShell):**
-     ```powershell
-     python -m venv .venv
-     .\.venv\Scripts\Activate.ps1
-     ```
-   * **macOS / Linux:**
-     ```bash
-     python3 -m venv .venv
-     source .venv/bin/activate
-     ```
-
-3. Install required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create a `.env` file in `pitc-backend/.env`:
-   ```env
-   GEMINI_API_KEY=your_actual_gemini_api_key_here
-   CLOUD_MODEL_NAME=gemini-2.5-flash-lite
-   OLLAMA_BASE_URL=http://localhost:11434/v1
-   LOCAL_MODEL_NAME=aya-expanse:8b
-   CLOUD_TIMEOUT_SECONDS=10.0
-   ```
-
-5. Start the FastAPI development server:
-   ```bash
-   uvicorn main:app --reload --port 8000
-   ```
-   *Interactive API documentation is available at `http://localhost:8000/docs`.*
-
----
-
-### 2. Frontend Configuration (`pitc-frontend`)
-
-1. Open a new terminal and navigate to the frontend directory:
-   ```bash
-   cd pitc-frontend
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-   *The application interface will be live at `http://localhost:5173`.*
+| No popup appears when selecting text | Reload the extension on `chrome://extensions`, then refresh the page. It does not run on `chrome://` pages, the Web Store, or PDF viewers. |
+| "Cannot reach the PITC backend at localhost:8000" | The backend isn't running. Start it (Step 2) and confirm `/health` works. |
+| "GEMINI_API_KEY is not set" | Create `backend/.env` from `.env.example`, add your key, and restart `uvicorn` (the file is only read at startup). |
+| "All AI providers failed" | Open `backend/pitc.log` and read the `Cloud ... failed` lines. Typical causes are an invalid key, a model name your key can't use, or quota limits. |
+| `Address already in use` on port 8000 | Another process uses the port. Find it with `lsof -i :8000` and stop it. |
+| Popup appears in the wrong place inside a text box | Report it with the site name. |
+| Frontend changes don't show | Re-run `npm run build`, click the reload icon on the extension card, and refresh the page. |
 
 ---
 
 ## API Reference
 
-### Text Chat Endpoints
+### `POST /crt/questions`
+Returns the CRT context questions (0 to 2) that should be answered before translating.
+```json
+{ "text": "Please send the file today.", "source_language": "auto", "target_language": "hi" }
+```
+```json
+{
+  "questions": [
+    { "id": "q1", "crt_code": "C4", "question": "Who is this message for?",
+      "options": ["A senior or elder", "A colleague", "A junior or close friend"] }
+  ],
+  "model_used": "Cloud (gemini-...)"
+}
+```
 
-#### `POST /coach`
-Analyzes an outbound message draft against recipient hierarchy and CRT rules, returning three calibrated tone options.
-* **Payload:**
-  ```json
-  {
-    "draft_message": "तू कल रिपोर्ट कब देगा?",
-    "language_code": "hi",
-    "recipient_role": "senior",
-    "provider": "auto"
-  }
-  ```
-* **Response:**
-  ```json
-  {
-    "is_risky": true,
-    "risk_level": "amber",
-    "crt_code": "C1",
-    "warning_message": "Using informal pronoun 'तू' (Tu) with a senior manager causes pragmatic friction.",
-    "variants": {
-      "formal": "आप कल रिपोर्ट किस समय प्रस्तुत करेंगे?",
-      "semi_formal": "आप कल रिपोर्ट कब तक दे पाएंगे?",
-      "casual": "तू कल रिपोर्ट कब देगा?"
-    },
-    "predicted_reactions": {
-      "formal_reaction": "Perceived as deferential, professional, and respectful of hierarchy.",
-      "semi_formal_reaction": "Polite and balanced for daily office collaboration.",
-      "casual_reaction": "High risk of causing offense or appearing insubordinate."
-    },
-    "model_used": "Cloud (gemini-2.5-flash-lite)"
-  }
-  ```
+### `POST /crt/translate`
+Translates using the answers. `answers` may be empty (the model then picks a safe, polite default).
+```json
+{
+  "text": "Please send the file today.",
+  "source_language": "auto",
+  "target_language": "hi",
+  "answers": [{ "id": "q1", "crt_code": "C4", "question": "Who is this message for?", "answer": "A senior or elder" }]
+}
+```
+Response fields: `translated_text`, `register_used`, `crt_applied` (list of `{code, note}`), `variants` (list of `{label, text, nuance}`), `cultural_notes`, `model_used`.
 
-#### `POST /analyse`
-Audits an entire conversational transcript for relational strain and CRT violations.
+Limits: text is 1 to 1500 characters; `source_language` is `auto` or one of `en, hi, ta, kn, ar`; source and target must differ.
 
----
-
-### Speech Translation Endpoints
-
-#### `POST /speech-translate`
-Performs bidirectional translation with native script output, honorific tracking, and tone calibration.
-* **Payload:**
-  ```json
-  {
-    "audio_text": "Could you please send the updated proposal by this evening?",
-    "source_language": "en",
-    "target_language": "hi",
-    "tone": "polite",
-    "provider": "auto"
-  }
-  ```
-* **Response:**
-  ```json
-  {
-    "session_id": "speech-session-default",
-    "original_text": "Could you please send the updated proposal by this evening?",
-    "translated_text": "क्या आप कृपया आज शाम तक संशोधित प्रस्ताव भेजने का कष्ट करेंगे?",
-    "source_language": "en",
-    "target_language": "hi",
-    "selected_tone": "polite",
-    "t_v_pronoun_used": "आप (Aap) - Formal Deference",
-    "cultural_notes": "Employs high-deference honorific framing suitable for formal professional requests.",
-    "model_used": "Cloud (gemini-2.5-flash-lite)"
-  }
-  ```
+### Legacy endpoints (original web app, not used by the extension)
+`POST /coach`, `POST /analyse`, `POST /reply`, `POST /speech-translate`, `POST /chat-reply`. See `http://localhost:8000/docs`.
 
 ---
 
 ## Testing Workflow
 
-1. **Verify Role Awareness:**
-   * Select **Text Chat Guardrail** on the landing page.
-   * Enter the **Senior / Superior** chat (Dr. Rajesh Sharma).
-   * Type an informal Hindi query: `तू फाइल भेज दे`
-   * Click **🛡️ Coach Me**. Verify that a **C1** warning appears and the **Formal** card provides the *Aap* honorific variant.
-   * Click the **Formal** card to confirm instant draft substitution in the composer.
-
-2. **Verify Bidirectional Speech Engine:**
-   * Switch to **Voice Coach** via the top navbar.
-   * Set Speaker 1 to **English** and Speaker 2 to **Hindi**; select **Polite** tone.
-   * Click **Speak English** and say: *"Let us schedule our project review meeting."*
-   * Verify target translation displays in native Devanagari script and plays through synthesized audio.
-   * Click **Speak Hindi** and reply in Hindi. Verify the translation translates into spoken English.
-
-3. **Verify Local Fallback:**
-   * Disconnect internet access or provide an invalid key in `.env`.
-   * Trigger an analysis or voice translation; inspect terminal output to confirm execution routes seamlessly to `Local (aya-expanse:8b)`.
+1. **CRT questions affect the output**
+   * Select `Please send me the report by tomorrow.`, target **Hindi**.
+   * Answer the recipient question with **A senior or elder**. Expect the *Aap* register and a C1 or C4 note.
+   * Select the same text again and answer **A junior or close friend**. Expect a more informal register, so the two translations should differ.
+2. **No questions for neutral text**
+   * Select `The meeting is at 3 PM.` PITC may go straight to the translation.
+3. **Skip questions**
+   * Click **Skip questions** and confirm a translation still appears with a neutral, polite register.
+4. **Error handling**
+   * Stop the backend and select text. The popup should say it cannot reach the backend.
+   * Start the backend with no `.env` and expect the "GEMINI_API_KEY is not set" message.
+   * With the key set, check that `backend/pitc.log` shows `Cloud ... OK` and which model answered.
+5. **Local fallback (optional)**
+   * Use an invalid key with Ollama running. The log should show the cloud failures and then `Ollama OK`.
 
 ---
 

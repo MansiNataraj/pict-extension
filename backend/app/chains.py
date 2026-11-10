@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+import time
 from typing import Any, Dict, Tuple
 import httpx
 from openai import AsyncOpenAI
@@ -10,6 +12,8 @@ from config import (
     LOCAL_MODEL_NAME,
     CLOUD_TIMEOUT_SECONDS
 )
+
+log = logging.getLogger("pitc.llm")
 
 local_client = AsyncOpenAI(
     base_url=OLLAMA_BASE_URL,
@@ -45,7 +49,7 @@ def clean_and_parse_json(raw_text: str) -> Dict[str, Any]:
         try:
             return json.loads(sanitized)
         except Exception as err:
-            print(f"[JSON Parse Error]: {err}")
+            log.warning("JSON parse failed: %s | raw[:200]=%r", err, raw_text[:200])
             return {}
 
 async def _call_gemini_direct(model: str, prompt: str, temperature: float) -> Dict[str, Any]:
@@ -64,7 +68,9 @@ async def _call_gemini_direct(model: str, prompt: str, temperature: float) -> Di
 
     async with httpx.AsyncClient(timeout=CLOUD_TIMEOUT_SECONDS) as client:
         resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface Google's reason (bad key, unknown model, quota) instead of a bare status.
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
         return clean_and_parse_json(raw_text)
@@ -92,20 +98,44 @@ async def execute_llm_chain(
 ) -> Tuple[Dict[str, Any], str]:
     mode = (provider or "auto").lower()
 
-    if mode in ("cloud", "auto") and CLOUD_API_KEY:
-        for model_name in CLOUD_CANDIDATES:
-            try:
-                result = await _call_gemini_direct(model_name, prompt, temperature)
-                if result:
-                    return result, f"Cloud ({model_name})"
-            except Exception as cloud_err:
-                print(f"[Notice] Cloud ({model_name}) attempt failed: {cloud_err}")
+    log.info("LLM request: provider=%s key_set=%s prompt_chars=%d", mode, bool(CLOUD_API_KEY), len(prompt))
 
-    # Fallback to local Ollama
-    print(f"[Notice] Running local Ollama fallback ({LOCAL_MODEL_NAME})...")
+    if mode in ("cloud", "auto"):
+        if not CLOUD_API_KEY:
+            log.warning("GEMINI_API_KEY is not set; skipping cloud models")
+        else:
+            tried = set()
+            for model_name in CLOUD_CANDIDATES:
+                if model_name in tried:
+                    continue
+                tried.add(model_name)
+                started = time.perf_counter()
+                try:
+                    result = await _call_gemini_direct(model_name, prompt, temperature)
+                    ms = (time.perf_counter() - started) * 1000
+                    if result:
+                        log.info("Cloud %s OK in %.0f ms", model_name, ms)
+                        return result, f"Cloud ({model_name})"
+                    log.warning("Cloud %s returned empty/unparsable JSON after %.0f ms", model_name, ms)
+                except Exception as cloud_err:
+                    log.warning("Cloud %s failed after %.0f ms: %s: %s", model_name,
+                                (time.perf_counter() - started) * 1000,
+                                type(cloud_err).__name__, cloud_err)
+
+    log.info("Falling back to local Ollama (%s at %s)", LOCAL_MODEL_NAME, OLLAMA_BASE_URL)
+    started = time.perf_counter()
     try:
         result = await _call_ollama(LOCAL_MODEL_NAME, prompt, temperature)
+        log.info("Ollama OK in %.0f ms", (time.perf_counter() - started) * 1000)
         return result, f"Local ({LOCAL_MODEL_NAME})"
     except Exception as local_err:
-        print(f"[Critical] Both Cloud and Ollama failed: {local_err}")
-        raise local_err
+        log.error("Ollama failed: %s: %s", type(local_err).__name__, local_err)
+        if not CLOUD_API_KEY:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set. Create backend/.env from .env.example, "
+                "add your key, and restart the backend."
+            ) from local_err
+        raise RuntimeError(
+            "All AI providers failed. Check backend/pitc.log for the Gemini error "
+            "(invalid key, unknown model name or quota) and that the key is valid."
+        ) from local_err

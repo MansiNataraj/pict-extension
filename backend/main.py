@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+import logging
+import time
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import speech, chat_reply
+from app.logging_config import setup_logging, LOG_FILE
+from app.routers import speech, chat_reply, crt
 from app.models import (
     ThreadAnalyseRequest, ThreadAnalyseResponse,
     CoachRequest, CoachResponse,
@@ -12,11 +16,21 @@ from app.prompts import (
     get_reply_ghostwriter_prompt
 )
 from app.chains import execute_llm_chain
-from config import SUPPORTED_LANGUAGES
+from config import SUPPORTED_LANGUAGES, CLOUD_API_KEY, CLOUD_MODEL_NAME, LOCAL_MODEL_NAME, OLLAMA_BASE_URL
+
+setup_logging()
+log = logging.getLogger("pitc.api")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _log_startup()
+    yield
+
 
 app = FastAPI(
     title="PITC - Proactive Intelligent Translation Coach",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -30,6 +44,29 @@ app.add_middleware(
 # Include the Speech Translation router
 app.include_router(speech.router)
 app.include_router(chat_reply.router)
+app.include_router(crt.router)
+
+def _log_startup():
+    log.info("PITC backend starting. Gemini key set: %s | cloud model: %s | local model: %s @ %s",
+             bool(CLOUD_API_KEY), CLOUD_MODEL_NAME, LOCAL_MODEL_NAME, OLLAMA_BASE_URL)
+    if not CLOUD_API_KEY:
+        log.warning("GEMINI_API_KEY is empty. Create backend/.env from .env.example and restart.")
+    log.info("Logging to %s", LOG_FILE)
+
+
+@app.middleware("http")
+async def _log_requests(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("%s %s -> unhandled error", request.method, request.url.path)
+        raise
+    if request.url.path != "/health":
+        log.info("%s %s -> %d (%.0f ms)", request.method, request.url.path,
+                 response.status_code, (time.perf_counter() - started) * 1000)
+    return response
+
 
 @app.get("/health")
 def health_check():
