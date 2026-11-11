@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PITC - Proactive Intelligent Translation Coach",
   "version": "2.0.0",
-  "description": "Cross-cultural chat coaching and speech translation in your browser side panel.",
+  "description": "Select text on any page to translate it with cultural-risk (CRT) questions for register, hierarchy, gender and idioms.",
   "action": {
     "default_title": "PITC: select text on any page to translate"
   },

@@ -64,27 +64,31 @@ The extension is only the UI. The backend runs on the user's own machine and hol
 
 ```text
 PITC-Extension/
-├── backend/
+├── backend/                       # FastAPI server (runs on the user's machine)
+│   ├── main.py                    # App assembly: CORS, middleware, mounts routers, /health
+│   ├── config.py                  # Env settings, languages, CRT taxonomy
+│   ├── requirements.txt           # Runtime deps (requirements-dev.txt adds pytest)
 │   ├── .env.example               # Copy to .env and add GEMINI_API_KEY
-│   ├── requirements.txt
-│   ├── main.py                    # FastAPI app, CORS, request logging
-│   ├── config.py                  # Languages, CRT taxonomy, model names
-│   └── app/
-│       ├── chains.py              # Gemini call + Ollama fallback, logging
-│       ├── models.py              # Pydantic request/response schemas
-│       ├── prompts.py             # CRT question + translation prompts
-│       ├── logging_config.py      # Console + backend/pitc.log
-│       └── routers/
-│           ├── crt.py             # /crt/questions, /crt/translate (used by the extension)
-│           └── speech.py, chat_reply.py, ...   # legacy web-app endpoints
+│   ├── app/
+│   │   ├── chains.py              # LLM call: Gemini REST with fallbacks, then local Ollama
+│   │   ├── middleware.py          # One log line per request
+│   │   ├── logging_config.py      # Console + backend/pitc.log
+│   │   ├── models/                # Pydantic schemas
+│   │   │   ├── crt.py             #   extension flow
+│   │   │   └── legacy.py          #   legacy web-app endpoints
+│   │   ├── prompts/               # LLM prompts (same split: crt.py, legacy.py)
+│   │   └── routers/
+│   │       ├── crt.py             # /crt/questions, /crt/translate  <- used by the extension
+│   │       └── speech.py, chat_reply.py, coach.py, analyse.py, reply.py   # legacy
+│   └── tests/                     # pytest, LLM mocked: `cd backend && pytest`
 │
 ├── frontend/
-│   ├── public/
-│   │   ├── manifest.json          # Manifest V3
-│   │   ├── content.js             # Select-to-translate popup
-│   │   └── background.js          # Service worker, relays requests to the backend
-│   ├── src/                       # Legacy React UI (not exposed by the extension)
-│   └── vite.config.js             # Builds to frontend/dist
+│   ├── public/                    # THE EXTENSION (copied as-is into dist/)
+│   │   ├── manifest.json          #   Manifest V3
+│   │   ├── content.js             #   Select-to-translate popup (shadow DOM)
+│   │   └── background.js          #   Service worker, relays requests to the backend
+│   ├── src/ + index.html          # Legacy React UI (not loaded by the extension)
+│   └── vite.config.js             # `npm run build` -> frontend/dist (the folder to load)
 │
 └── readme.md
 ```
@@ -199,11 +203,15 @@ Response fields: `translated_text`, `register_used`, `crt_applied` (list of `{co
 Limits: text is 1 to 1500 characters; `source_language` is `auto` or one of `en, hi, ta, kn, ar`; source and target must differ.
 
 ### Legacy endpoints (original web app, not used by the extension)
-`POST /coach`, `POST /analyse`, `POST /reply`, `POST /speech-translate`, `POST /chat-reply`. See `http://localhost:8000/docs`.
+`POST /coach`, `POST /analyse`, `POST /reply`, `POST /speech-translate`, `POST /chat-reply`. All are mounted and covered by tests. See `http://localhost:8000/docs`.
 
 ---
 
 ## Testing Workflow
+
+**Automated (no API key needed):** `cd backend && pip install -r requirements-dev.txt && pytest`
+
+**Manual:**
 
 1. **CRT questions affect the output**
    * Select `Please send me the report by tomorrow.`, target **Hindi**.

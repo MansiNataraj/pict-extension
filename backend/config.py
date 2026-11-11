@@ -8,6 +8,7 @@ load_dotenv()
 CLOUD_BASE_URL: str = os.getenv("CLOUD_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/models")
 CLOUD_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
 CLOUD_MODEL_NAME: str = os.getenv("CLOUD_MODEL_NAME", "gemini-3.5-flash-lite")
+CLOUD_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
 CLOUD_TIMEOUT_SECONDS: float = float(os.getenv("CLOUD_TIMEOUT_SECONDS", "10.0"))
 
 # Local Fallback Provider (Ollama)
@@ -43,6 +44,13 @@ SUPPORTED_LANGUAGES: Dict[str, Dict[str, Any]] = {
         "direction": "rtl",
         "t_v_system": "Hadratak/Antum (formal) / Inta (colloquial)"
     }
+}
+
+# Supported languages plus English (English is a valid source/target for translation only).
+ALL_LANGUAGES: Dict[str, Dict[str, Any]] = {
+    **SUPPORTED_LANGUAGES,
+    "en": {"name": "English", "native": "English", "script": "Latin", "direction": "ltr",
+           "t_v_system": "Modal politeness (would/could/please)"},
 }
 
 CRT_TAXONOMY: Dict[str, str] = {

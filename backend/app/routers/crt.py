@@ -8,15 +8,11 @@ from app.models import (
 from app.prompts import get_crt_questions_prompt, get_crt_translate_prompt
 from app.chains import execute_llm_chain
 from app.logging_config import preview
-from config import SUPPORTED_LANGUAGES
+from config import ALL_LANGUAGES
 
 log = logging.getLogger("pitc.crt")
 router = APIRouter(prefix="/crt", tags=["CRT Translate"])
 
-ALL_LANGS = {
-    **SUPPORTED_LANGUAGES,
-    "en": {"name": "English", "t_v_system": "Modal politeness (would/could/please)"},
-}
 MAX_TEXT_CHARS = 1500
 VALID_CODES = {"C1", "C2", "C3", "C4", "C5"}
 
@@ -24,13 +20,13 @@ VALID_CODES = {"C1", "C2", "C3", "C4", "C5"}
 def _resolve_langs(source: str, target: str):
     src = (source or "auto").strip().lower()
     tgt = (target or "").strip().lower()
-    if tgt not in ALL_LANGS:
+    if tgt not in ALL_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported target language '{target}'.")
-    if src != "auto" and src not in ALL_LANGS:
+    if src != "auto" and src not in ALL_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported source language '{source}'.")
     if src == tgt:
         raise HTTPException(status_code=400, detail="Source and target languages must be different.")
-    src_name = "the source language (auto-detect it)" if src == "auto" else ALL_LANGS[src]["name"]
+    src_name = "the source language (auto-detect it)" if src == "auto" else ALL_LANGUAGES[src]["name"]
     return src, tgt, src_name
 
 
@@ -49,7 +45,7 @@ async def crt_questions(req: CrtQuestionsRequest):
     src, tgt, src_name = _resolve_langs(req.source_language, req.target_language)
     log.info("questions: %s->%s chars=%d text=%r", src, tgt, len(text), preview(text))
 
-    prompt = get_crt_questions_prompt(text, src_name, ALL_LANGS[tgt]["name"], ALL_LANGS[tgt]["t_v_system"])
+    prompt = get_crt_questions_prompt(text, src_name, ALL_LANGUAGES[tgt]["name"], ALL_LANGUAGES[tgt]["t_v_system"])
     started = time.perf_counter()
     try:
         result, model_used = await execute_llm_chain(prompt, temperature=0.2, provider=req.provider)
@@ -86,8 +82,8 @@ async def crt_translate(req: CrtTranslateRequest):
     for a in req.answers:
         log.info("translate: answer [%s] %s -> %s", a.crt_code, a.question, a.answer)
 
-    prompt = get_crt_translate_prompt(text, src_name, ALL_LANGS[tgt]["name"],
-                                      ALL_LANGS[tgt]["t_v_system"], req.answers)
+    prompt = get_crt_translate_prompt(text, src_name, ALL_LANGUAGES[tgt]["name"],
+                                      ALL_LANGUAGES[tgt]["t_v_system"], req.answers)
     started = time.perf_counter()
     try:
         result, model_used = await execute_llm_chain(prompt, temperature=0.2, provider=req.provider)

@@ -2,14 +2,10 @@ from fastapi import APIRouter, HTTPException
 from app.models import SpeechTranslateRequest, SpeechTranslateResponse
 from app.prompts import get_speech_translate_prompt
 from app.chains import execute_llm_chain
-from config import SUPPORTED_LANGUAGES
+from config import ALL_LANGUAGES
 
 router = APIRouter(prefix="/speech-translate", tags=["Speech Translation"])
 
-ALL_SPEECH_LANGS = {
-    **SUPPORTED_LANGUAGES,
-    "en": {"name": "English", "t_v_system": "Modal politeness (would/could/please)"}
-}
 
 @router.post("", response_model=SpeechTranslateResponse)
 @router.post("/", response_model=SpeechTranslateResponse)
@@ -17,15 +13,15 @@ async def translate_speech(req: SpeechTranslateRequest):
     src = req.source_language.strip().lower()
     tgt = req.target_language.strip().lower()
 
-    if src not in ALL_SPEECH_LANGS or tgt not in ALL_SPEECH_LANGS:
+    if src not in ALL_LANGUAGES or tgt not in ALL_LANGUAGES:
         raise HTTPException(status_code=400, detail="Unsupported language code.")
     if src == tgt:
         raise HTTPException(status_code=400, detail="Source and Target languages must be different.")
 
     prompt = get_speech_translate_prompt(
         text=req.audio_text,
-        src_lang=ALL_SPEECH_LANGS[src]["name"],
-        tgt_lang=ALL_SPEECH_LANGS[tgt]["name"],
+        src_lang=ALL_LANGUAGES[src]["name"],
+        tgt_lang=ALL_LANGUAGES[tgt]["name"],
         tone=req.tone
     )
 

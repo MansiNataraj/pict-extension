@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -7,6 +8,8 @@ import httpx
 from openai import AsyncOpenAI
 from config import (
     CLOUD_API_KEY,
+    CLOUD_BASE_URL,
+    CLOUD_FALLBACK_MODELS,
     CLOUD_MODEL_NAME,
     OLLAMA_BASE_URL,
     LOCAL_MODEL_NAME,
@@ -20,11 +23,8 @@ local_client = AsyncOpenAI(
     api_key="ollama"
 )
 
-CLOUD_CANDIDATES = [
-    CLOUD_MODEL_NAME,
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash"
-]
+# Configured model first, then fallbacks, without duplicates.
+CLOUD_CANDIDATES = list(dict.fromkeys([CLOUD_MODEL_NAME, *CLOUD_FALLBACK_MODELS]))
 
 def clean_and_parse_json(raw_text: str) -> Dict[str, Any]:
     if not raw_text or not raw_text.strip():
@@ -52,8 +52,15 @@ def clean_and_parse_json(raw_text: str) -> Dict[str, Any]:
             log.warning("JSON parse failed: %s | raw[:200]=%r", err, raw_text[:200])
             return {}
 
+class TransientCloudError(RuntimeError):
+    """Gemini said 'try again' (429 rate limit or 5xx overload)."""
+
+
+RETRY_DELAY_SECONDS = 1.0
+
+
 async def _call_gemini_direct(model: str, prompt: str, temperature: float) -> Dict[str, Any]:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    url = f"{CLOUD_BASE_URL.rstrip('/')}/{model}:generateContent"
     headers = {
         "x-goog-api-key": CLOUD_API_KEY,
         "Content-Type": "application/json"
@@ -68,6 +75,8 @@ async def _call_gemini_direct(model: str, prompt: str, temperature: float) -> Di
 
     async with httpx.AsyncClient(timeout=CLOUD_TIMEOUT_SECONDS) as client:
         resp = await client.post(url, headers=headers, json=payload)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise TransientCloudError(f"HTTP {resp.status_code}: {resp.text[:300]}")
         if resp.status_code >= 400:
             # Surface Google's reason (bad key, unknown model, quota) instead of a bare status.
             raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
@@ -104,14 +113,15 @@ async def execute_llm_chain(
         if not CLOUD_API_KEY:
             log.warning("GEMINI_API_KEY is not set; skipping cloud models")
         else:
-            tried = set()
             for model_name in CLOUD_CANDIDATES:
-                if model_name in tried:
-                    continue
-                tried.add(model_name)
                 started = time.perf_counter()
                 try:
-                    result = await _call_gemini_direct(model_name, prompt, temperature)
+                    try:
+                        result = await _call_gemini_direct(model_name, prompt, temperature)
+                    except TransientCloudError as busy:
+                        log.warning("Cloud %s busy (%s); retrying once", model_name, str(busy)[:80])
+                        await asyncio.sleep(RETRY_DELAY_SECONDS)
+                        result = await _call_gemini_direct(model_name, prompt, temperature)
                     ms = (time.perf_counter() - started) * 1000
                     if result:
                         log.info("Cloud %s OK in %.0f ms", model_name, ms)

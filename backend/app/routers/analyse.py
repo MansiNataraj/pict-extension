@@ -1,42 +1,38 @@
+"""Legacy web-app endpoint: audit a whole conversation thread for cultural friction."""
 from fastapi import APIRouter, HTTPException
-from app.models import ThreadAnalyseRequest, ThreadAnalyseResponse
-from app.prompts import get_analyse_prompt
 from app.chains import execute_llm_chain
+from app.models import ThreadAnalyseRequest, ThreadAnalyseResponse
+from app.prompts import get_thread_analysis_prompt
 from config import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/analyse", tags=["Thread Analyser"])
 
+
 @router.post("", response_model=ThreadAnalyseResponse)
-@router.post("/", response_model=ThreadAnalyseResponse)
-async def analyse_conversation_thread(payload: ThreadAnalyseRequest):
-    lang_info = SUPPORTED_LANGUAGES.get(payload.language_code)
-    if not lang_info:
+@router.post("/", response_model=ThreadAnalyseResponse, include_in_schema=False)
+async def analyse_thread(req: ThreadAnalyseRequest):
+    lang = SUPPORTED_LANGUAGES.get(req.language_code)
+    if not lang:
         raise HTTPException(status_code=400, detail="Unsupported language code")
 
-    thread_lines = [f"[{i}] {msg.speaker}: {msg.message}" for i, msg in enumerate(payload.thread)]
-    thread_text = "\n".join(thread_lines)
+    prompt = get_thread_analysis_prompt(lang["name"], req.thread)
+    try:
+        result, model = await execute_llm_chain(prompt, temperature=0.2, provider=req.provider)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Thread analysis failed: {e}")
 
-    prompt = get_analyse_prompt(
-        language_name=lang_info["name"],
-        t_v_info=lang_info["t_v_system"],
-        thread_text=thread_text
+    return ThreadAnalyseResponse(
+        session_id=req.session_id,
+        health_score=_as_int(result.get("health_score"), 85),
+        crt_violations=[str(v) for v in (result.get("crt_violations") or [])],
+        root_cause=result.get("root_cause", "No severe relational friction detected."),
+        remediation_advice=result.get("remediation_advice", "Maintain current honorific register."),
+        model_used=model,
     )
 
+
+def _as_int(value, default: int) -> int:
     try:
-        result, model_used = await execute_llm_chain(
-            prompt, 
-            temperature=0.1, 
-            provider=payload.provider
-        )
-        return ThreadAnalyseResponse(
-            session_id=payload.session_id,
-            health_score=result.get("health_score", "Low"),
-            health_explanation=result.get("health_explanation", "Conversation flow evaluated."),
-            riskiest_message_index=int(result.get("riskiest_message_index", 0)),
-            crt_category=result.get("crt_category", "None"),
-            crt_explanation=result.get("crt_explanation", "No major friction detected."),
-            recommendation=result.get("recommendation", "Continue respectful conversation."),
-            model_used=model_used
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis engine error: {str(e)}")
+        return int(value)
+    except (TypeError, ValueError):
+        return default
